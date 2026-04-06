@@ -1,8 +1,7 @@
 import os
 import json
-import asyncio
 import logging
-from datetime import datetime
+from datetime import time
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from groq import Groq
@@ -37,6 +36,7 @@ def get_found_platforms():
         return set()
 
 def save_platforms(platforms):
+    from datetime import datetime
     try:
         sheet = get_sheet()
         existing = get_found_platforms()
@@ -44,13 +44,7 @@ def save_platforms(platforms):
         for p in platforms:
             name = p.get("name", "").strip()
             if name and name.lower() not in existing:
-                new_rows.append([
-                    name,
-                    p.get("type", ""),
-                    p.get("geo", ""),
-                    p.get("contact", ""),
-                    datetime.now().strftime("%Y-%m-%d")
-                ])
+                new_rows.append([name, p.get("type",""), p.get("geo",""), p.get("contact",""), datetime.now().strftime("%Y-%m-%d")])
         if new_rows:
             sheet.append_rows(new_rows)
         return len(new_rows)
@@ -63,16 +57,10 @@ def find_platforms(count=10):
     exclude_text = ""
     if found:
         sample = list(found)[:30]
-        exclude_text = f"\n\nНЕ включай эти площадки (уже найдены ранее):\n" + "\n".join(sample)
+        exclude_text = "\n\nНЕ включай эти площадки:\n" + "\n".join(sample)
 
     prompt = f"""Найди {count} НОВЫХ площадок для аффилейт-продвижения dating-офферов.
-
-Параметры:
-- Тип: все типы (сайты, блоги, YouTube, Instagram, TikTok, подкасты)
-- Гео: Tier-1 (US, UK, AU)
-- Подниша: casual dating, serious relationships, high traffic
-- Важно: только реальные существующие площадки{exclude_text}
-
+Параметры: все типы, Tier-1 (US, UK, AU), casual dating, serious relationships{exclude_text}
 Верни ТОЛЬКО валидный JSON без markdown:
 {{"platforms":[{{"name":"название","type":"site|youtube|instagram|tiktok|podcast","geo":"US","audience":"аудитория","why":"почему подходит","traffic":"охват","contact":"контакт"}}]}}"""
 
@@ -82,48 +70,34 @@ def find_platforms(count=10):
         max_tokens=2000,
         temperature=0.7
     )
-    
     text = response.choices[0].message.content
-    text = text.replace("```json", "").replace("```", "").strip()
+    text = text.replace("```json","").replace("```","").strip()
     start = text.find("{")
     end = text.rfind("}") + 1
     data = json.loads(text[start:end])
     return data.get("platforms", [])
 
 async def send_daily(context: ContextTypes.DEFAULT_TYPE):
+    from datetime import datetime
     try:
         await context.bot.send_message(chat_id=CHAT_ID, text="🔍 Ищу новые площадки...")
         platforms = find_platforms(10)
-        
         if not platforms:
-            await context.bot.send_message(chat_id=CHAT_ID, text="❌ Не удалось найти площадки. Попробую завтра.")
+            await context.bot.send_message(chat_id=CHAT_ID, text="❌ Не удалось найти площадки.")
             return
-
         saved = save_platforms(platforms)
-        
-        text = f"📋 *Новые площадки для Dating — {datetime.now().strftime('%d.%m.%Y')}*\n"
-        text += f"_Найдено новых: {saved} из {len(platforms)}_\n\n"
-        
+        text = f"📋 *Новые площадки — {datetime.now().strftime('%d.%m.%Y')}*\n_Новых: {saved} из {len(platforms)}_\n\n"
         for i, p in enumerate(platforms, 1):
-            text += f"*{i}. {p.get('name')}*\n"
-            text += f"📌 {p.get('type')} | 🌍 {p.get('geo')}\n"
-            text += f"👥 {p.get('audience')}\n"
-            text += f"✅ {p.get('why')}\n"
-            text += f"📊 {p.get('traffic')}\n"
-            text += f"📬 {p.get('contact')}\n\n"
-        
+            text += f"*{i}. {p.get('name')}*\n📌 {p.get('type')} | 🌍 {p.get('geo')}\n👥 {p.get('audience')}\n✅ {p.get('why')}\n📊 {p.get('traffic')}\n📬 {p.get('contact')}\n\n"
         await context.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
     except Exception as e:
-        logger.error(f"Daily send error: {e}")
         await context.bot.send_message(chat_id=CHAT_ID, text=f"❌ Ошибка: {str(e)}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Привет! Я бот для поиска аффилейт-площадок.\n\n"
-        "Команды:\n"
-        "/find — найти 10 новых площадок прямо сейчас\n"
-        "/find 20 — найти 20 площадок\n"
-        "/status — статистика найденных площадок"
+        "👋 Привет! Я бот для поиска аффилейт-площадок в нише dating.\n\n"
+        "Команды:\n/find — найти 10 новых площадок\n/find 20 — найти 20 площадок\n/status — статистика\n\n"
+        "Каждый день в 9:00 буду присылать новые площадки! 🚀"
     )
 
 async def find_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -133,25 +107,15 @@ async def find_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             count = min(int(context.args[0]), 30)
         except:
             pass
-    
     await update.message.reply_text(f"🔍 Ищу {count} площадок, подожди...")
-    
     try:
         platforms = find_platforms(count)
         saved = save_platforms(platforms)
-        
-        text = f"📋 *Найдено площадок: {len(platforms)}* (новых: {saved})\n\n"
+        text = f"📋 *Найдено: {len(platforms)}* (новых: {saved})\n\n"
         for i, p in enumerate(platforms, 1):
-            text += f"*{i}. {p.get('name')}*\n"
-            text += f"📌 {p.get('type')} | 🌍 {p.get('geo')}\n"
-            text += f"👥 {p.get('audience')}\n"
-            text += f"✅ {p.get('why')}\n"
-            text += f"📊 {p.get('traffic')}\n"
-            text += f"📬 {p.get('contact')}\n\n"
-        
+            text += f"*{i}. {p.get('name')}*\n📌 {p.get('type')} | 🌍 {p.get('geo')}\n👥 {p.get('audience')}\n✅ {p.get('why')}\n📊 {p.get('traffic')}\n📬 {p.get('contact')}\n\n"
         if len(text) > 4000:
-            parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
-            for part in parts:
+            for part in [text[i:i+4000] for i in range(0, len(text), 4000)]:
                 await update.message.reply_text(part, parse_mode="Markdown")
         else:
             await update.message.reply_text(text, parse_mode="Markdown")
@@ -160,20 +124,16 @@ async def find_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     found = get_found_platforms()
-    await update.message.reply_text(f"📊 Всего найдено площадок: {len(found)}\nВсе сохранены в Google Sheets.")
+    await update.message.reply_text(f"📊 Всего найдено площадок: {len(found)}")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("find", find_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
-
-    # Ежедневная рассылка в 9:00
-    job_queue = app.job_queue
-    job_queue.run_daily(send_daily, time=datetime.strptime("09:00", "%H:%M").time())
-
+    app.job_queue.run_daily(send_daily, time=time(9, 0))
     logger.info("Bot started!")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
